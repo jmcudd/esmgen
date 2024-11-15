@@ -18,8 +18,9 @@ async function main() {
 
   const defaultPort = 3000;
   const defaultHost = "127.0.0.1";
-  const defaultDir = path.join(process.cwd(), "esm"); // Default directory in current directory
+  const defaultDir = path.join(process.cwd(), "esm");
   const defaultRegistry = "https://registry.npmjs.org/";
+  const esmgenReadmePath = path.join(__dirname, "README.md");
 
   program
     .command("download [pkg] [version]")
@@ -35,6 +36,7 @@ async function main() {
     .option("--serve", "Serve the ESM directory after processing", false)
     .option("--port <port>", "Port to serve on", defaultPort)
     .option("--host <host>", "Host to bind the server to", defaultHost)
+    .option("--entry <entryFile>", "Custom entry HTML file to serve")
     .action(async (pkg, version = "latest", options) => {
       if (!pkg) {
         console.error("Package name is required.");
@@ -48,21 +50,22 @@ async function main() {
       const esmDirectory = await processPackage(pkg, version, CONVERTED_DIR);
 
       if (options.serve) {
-        serve(esmDirectory, options.port, options.host);
+        serve(esmDirectory, options.port, options.host, options.entry);
       }
     });
 
   program
     .command("serve")
     .alias("s")
-    .description("Serve the ESM directory")
+    .description("Serve the ESM directory.")
     .option("--port <port>", "Port to serve on", defaultPort)
     .option("--host <host>", "Host to bind the server to", defaultHost)
-    .option("--dir <dir>", "Directory ESM modules to serve", defaultDir)
+    .option("--dir <dir>", "Directory for ESM modules to serve", defaultDir)
+    .option("--entry <entryFile>", "Custom entry HTML file to serve")
     .action((options) => {
       const CONVERTED_DIR = path.resolve(options.dir || defaultDir);
       console.log(`Serving from directory: ${CONVERTED_DIR}`);
-      serve(CONVERTED_DIR, options.port, options.host);
+      serve(CONVERTED_DIR, options.port, options.host, options.entry);
     });
 
   program.parse(process.argv);
@@ -70,8 +73,87 @@ async function main() {
   const tempDir = os.tmpdir();
   const DOWNLOAD_DIR = path.join(tempDir, "esmgen-downloads");
 
-  function serve(dir, port, host) {
+  function serve(dir, port, host, customEntryFile) {
     const app = express();
+
+    function escapeHtml(unsafe) {
+      return unsafe
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    app.get("/", async (req, res) => {
+      if (customEntryFile) {
+        const customFilePath = path.join(process.cwd(), customEntryFile);
+        if (fs.existsSync(customFilePath)) {
+          return res.sendFile(customFilePath);
+        } else {
+          console.error(`${customFilePath} does not exist.`);
+          return res.status(404).send(`<h1>${customEntryFile} not found</h1>`);
+        }
+      }
+
+      try {
+        const contents = fs.readdirSync(dir, { withFileTypes: true });
+        const packageSnippets = contents
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => {
+            const packageName = entry.name;
+            const scriptTag = `import "/${packageName}/bundle.js";`;
+            const escapedScriptTag = escapeHtml(scriptTag);
+            return `
+            <li>
+              ${packageName}:
+              <pre style="display:inline;"><code>${escapedScriptTag}</code></pre>
+              <button onclick="copyToClipboard('${escapedScriptTag}')">Copy</button>
+            </li>
+          `;
+          })
+          .join("");
+
+        res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>ESM Packages</title>
+          <style>
+            pre {
+              background-color: #f5f5f5;
+              padding: 10px;
+              border-radius: 5px;
+              overflow-x: auto;
+            }
+            button {
+              margin-top: 5px;
+            }
+          </style>
+        </head>
+        <body>
+          <h1>Available ESM Packages</h1>
+          <ul>
+            ${packageSnippets}
+          </ul>
+          <script>
+            function copyToClipboard(text) {
+              navigator.clipboard.writeText(text).then(() => {
+                console.log('Script copied to clipboard!');
+              }).catch(err => {
+                console.error('Could not copy text: ', err);
+              });
+            }
+          </script>
+        </body>
+        </html>
+      `);
+      } catch (err) {
+        res.send("<h1>Error reading ESM directory</h1>");
+        console.error("Error reading directory:", err.message);
+      }
+    });
+
     app.use(express.static(dir));
 
     function attemptToListen(port) {
@@ -79,12 +161,9 @@ async function main() {
         console.log(`Serving ${dir} on http://${host}:${port}`);
       });
 
-      // Handle error if the port is in use
       server.on("error", (err) => {
         if (err.code === "EADDRINUSE") {
           console.error(`Port ${port} is in use, trying a different port...`);
-
-          // Get a random available port by setting port to 0
           attemptToListen(port + 1);
         } else {
           console.error(`Failed to start server: ${err.message}`);
@@ -92,7 +171,6 @@ async function main() {
       });
     }
 
-    // Start listening on the initial specified port
     attemptToListen(port);
   }
 
@@ -228,7 +306,7 @@ async function main() {
   }
 }
 
-// Call the main function to execute the program logic
+// Call the main function to execute the program logic.
 main().catch((error) => {
   console.error(error);
   process.exit(1);

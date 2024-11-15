@@ -14,7 +14,14 @@
     "type": "git",
     "url": "git+https://github.com/jmcudd/esmgen.git"
   },
-  "keywords": ["esm", "modules", "CLI", "npm", "static", "file server"],
+  "keywords": [
+    "esm",
+    "modules",
+    "CLI",
+    "npm",
+    "static",
+    "file server"
+  ],
   "author": "John Cudd <jmcudd@gmail.com>",
   "license": "MIT",
   "bugs": {
