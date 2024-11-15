@@ -74,9 +74,26 @@ async function main() {
     const app = express();
     app.use(express.static(dir));
 
-    app.listen(port, host, () => {
-      console.log(`Serving ${dir} on http://${host}:${port}`);
-    });
+    function attemptToListen(port) {
+      const server = app.listen(port, host, () => {
+        console.log(`Serving ${dir} on http://${host}:${port}`);
+      });
+
+      // Handle error if the port is in use
+      server.on("error", (err) => {
+        if (err.code === "EADDRINUSE") {
+          console.error(`Port ${port} is in use, trying a different port...`);
+
+          // Get a random available port by setting port to 0
+          attemptToListen(port + 1);
+        } else {
+          console.error(`Failed to start server: ${err.message}`);
+        }
+      });
+    }
+
+    // Start listening on the initial specified port
+    attemptToListen(port);
   }
 
   async function fetchPackageMetadata(pkg, version = "latest") {
