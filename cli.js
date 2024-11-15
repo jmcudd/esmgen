@@ -6,6 +6,7 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const rollup = require("rollup");
+const typescript = require("@rollup/plugin-typescript");
 const commonjs = require("@rollup/plugin-commonjs");
 const resolve = require("@rollup/plugin-node-resolve");
 const tar = require("tar");
@@ -211,7 +212,12 @@ async function main() {
 
     const bundle = await rollup.rollup({
       input: inputFilePath,
-      plugins: [resolve(), commonjs()],
+      plugins: [
+        // Using Conditionally only if file extension indicates
+        inputFilePath.endsWith(".ts") ? typescript({ tsconfig: false }) : null,
+        resolve(),
+        commonjs(),
+      ].filter(Boolean),
     });
 
     await bundle.write({
@@ -225,18 +231,57 @@ async function main() {
 
   function findEntryFile(inputDir) {
     const packageJsonPath = path.join(inputDir, "package.json");
+
     if (!fs.existsSync(packageJsonPath)) {
       throw new Error("package.json not found in the root directory");
     }
 
     const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
-    const entryFile = packageJson.main || "index.js";
-    const entryFilePath = path.join(inputDir, entryFile);
 
-    if (!fs.existsSync(entryFilePath)) {
-      throw new Error(`Entry file ${entryFile} not found in ${inputDir}`);
+    // Prioritize dist directory files based on exports
+    const exportFields = packageJson.exports;
+    if (exportFields) {
+      // Check for direct paths in exports, scrambled accordingly.
+      const possiblePaths = [exportFields.default, exportFields.require].flat();
+
+      for (const possiblePath of possiblePaths) {
+        if (typeof possiblePath === "string") {
+          const resolvedPath = path.join(inputDir, possiblePath);
+          if (fs.existsSync(resolvedPath)) {
+            return resolvedPath;
+          }
+        }
+      }
     }
-    return entryFilePath;
+
+    // If no exports, look for built files in the dist directory.
+    const distFiles = ["dist/index.js", "dist/index.cjs"];
+    for (const file of distFiles) {
+      const candidatePath = path.join(inputDir, file);
+      if (fs.existsSync(candidatePath)) {
+        return candidatePath;
+      }
+    }
+
+    // Last resort, check source field or typical main alternatives.
+    const sourceFile = packageJson.source || null;
+    const mainFile = packageJson.main || null;
+    const fileCandidates = [sourceFile, mainFile, "index.js", "index.ts"];
+
+    for (const candidate of fileCandidates) {
+      if (candidate) {
+        const candidatePath = path.join(inputDir, candidate);
+        if (fs.existsSync(candidatePath)) {
+          return candidatePath;
+        }
+      }
+    }
+
+    // If none are found, report error.
+    throw new Error(`
+    None of the potential entry files specified under exports, or built files (${distFiles.join(", ")}),
+    source or main were found in ${inputDir}
+  `);
   }
 
   async function processPackage(pkg, version, conversionDir) {
