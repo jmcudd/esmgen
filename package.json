@@ -8,8 +8,7 @@
   },
   "scripts": {
     "start": "node cli.js",
-    "test": "echo \"No tests specified\" && exit 0",
-    "serve": "nodemon server.js"
+    "test": "echo \"No tests specified\" && exit 0"
   },
   "repository": {
     "type": "git",
@@ -30,8 +29,5 @@
     "express": "^4.21.1",
     "rollup": "^4.27.1",
     "tar": "^7.4.3"
-  },
-  "devDependencies": {
-    "nodemon": "^3.1.7"
   }
 }

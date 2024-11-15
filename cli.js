@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+const express = require("express");
 const { Command } = require("commander");
 const axios = require("axios");
 const fs = require("fs");
@@ -15,19 +16,68 @@ async function main() {
 
   program.version("0.0.1");
 
+  const defaultPort = 3000;
+  const defaultHost = "127.0.0.1";
+  const defaultDir = path.join(process.cwd(), "esm"); // Default directory in current directory
+  const defaultRegistry = "https://registry.npmjs.org/";
+
   program
-    .argument("<pkg>", "package to download and convert")
-    .argument("[version]", "version of the package", "latest")
-    .action(async (pkg, version) => {
+    .command("download [pkg] [version]")
+    .alias("dl")
+    .alias("d")
+    .description("Download and convert a package to ESM.")
+    .option(
+      "--registry",
+      "Registry to download the package from",
+      defaultRegistry
+    )
+    .option("--dir <dir>", "Directory for ESM modules", defaultDir)
+    .option("--serve", "Serve the ESM directory after processing", false)
+    .option("--port <port>", "Port to serve on", defaultPort)
+    .option("--host <host>", "Host to bind the server to", defaultHost)
+    .action(async (pkg, version = "latest", options) => {
+      if (!pkg) {
+        console.error("Package name is required.");
+        process.exit(1);
+      }
+
+      const CONVERTED_DIR = path.resolve(options.dir || defaultDir);
       console.log(`Processing ${pkg}@${version}`);
-      await processPackage(pkg, version);
+      console.log(`Converted output directory: ${CONVERTED_DIR}`);
+
+      const esmDirectory = await processPackage(pkg, version, CONVERTED_DIR);
+
+      if (options.serve) {
+        serve(esmDirectory, options.port, options.host);
+      }
+    });
+
+  program
+    .command("serve")
+    .alias("s")
+    .description("Serve the ESM directory")
+    .option("--port <port>", "Port to serve on", defaultPort)
+    .option("--host <host>", "Host to bind the server to", defaultHost)
+    .option("--dir <dir>", "Directory ESM modules to serve", defaultDir)
+    .action((options) => {
+      const CONVERTED_DIR = path.resolve(options.dir || defaultDir);
+      console.log(`Serving from directory: ${CONVERTED_DIR}`);
+      serve(CONVERTED_DIR, options.port, options.host);
     });
 
   program.parse(process.argv);
 
   const tempDir = os.tmpdir();
   const DOWNLOAD_DIR = path.join(tempDir, "esmgen-downloads");
-  const CONVERTED_DIR = path.join(__dirname, "esm");
+
+  function serve(dir, port, host) {
+    const app = express();
+    app.use(express.static(dir));
+
+    app.listen(port, host, () => {
+      console.log(`Serving ${dir} on http://${host}:${port}`);
+    });
+  }
 
   async function fetchPackageMetadata(pkg, version = "latest") {
     const url = `https://registry.npmjs.org/${pkg}`;
@@ -75,6 +125,7 @@ async function main() {
     });
 
     console.log(`Converted to ESM at: ${path.join(outputDir, "bundle.js")}`);
+    return outputDir;
   }
 
   function findEntryFile(inputDir) {
@@ -93,19 +144,19 @@ async function main() {
     return entryFilePath;
   }
 
-  async function processPackage(pkg, version) {
+  async function processPackage(pkg, version, conversionDir) {
     try {
       const data = await fetchPackageMetadata(pkg, version);
 
       ensureDirectoryExists(DOWNLOAD_DIR);
-      ensureDirectoryExists(CONVERTED_DIR);
+      ensureDirectoryExists(conversionDir);
 
       const downloadOutputDir = path.join(
         DOWNLOAD_DIR,
         `${pkg}@${data.version}`
       );
       const conversionOutputDir = path.join(
-        CONVERTED_DIR,
+        conversionDir,
         `${pkg}@${data.version}`
       );
 
@@ -120,7 +171,12 @@ async function main() {
       console.log(`Converting to ESM modules...`);
       fs.mkdirSync(conversionOutputDir, { recursive: true });
 
-      return convertToESM(srcDir, conversionOutputDir);
+      const esmOutputDirectory = await convertToESM(
+        srcDir,
+        conversionOutputDir
+      );
+
+      return esmOutputDirectory;
     } catch (error) {
       console.error("Error:", error.message);
     }
