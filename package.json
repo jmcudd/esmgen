@@ -1,4 +1,27 @@
 {
+  "name": "esmgen",
+  "version": "1.0.0",
+  "description": "A CLI tool that generates and packages ESM modules from npm into a structured directory, serving with a static file server.",
+  "main": "cli.js",
+  "bin": {
+    "esmgen": "cli.js"
+  },
+  "scripts": {
+    "start": "node cli.js",
+    "test": "echo \"No tests specified\" && exit 0",
+    "serve": "nodemon server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jmcudd/esmgen.git"
+  },
+  "keywords": ["esm", "modules", "CLI", "npm", "static", "file server"],
+  "author": "John Cudd <jmcudd@gmail.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/jmcudd/esmgen/issues"
+  },
+  "homepage": "https://github.com/jmcudd/esmgen#readme",
   "dependencies": {
     "@rollup/plugin-commonjs": "^28.0.1",
     "@rollup/plugin-node-resolve": "^15.3.0",
