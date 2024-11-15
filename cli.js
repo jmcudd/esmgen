@@ -4,8 +4,11 @@ const { Command } = require("commander");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
+const rollup = require("rollup");
+const commonjs = require("@rollup/plugin-commonjs");
+const resolve = require("@rollup/plugin-node-resolve");
 const tar = require("tar");
-const babel = require("@babel/core");
+const os = require("os");
 
 async function main() {
   const program = new Command();
@@ -22,14 +25,9 @@ async function main() {
 
   program.parse(process.argv);
 
-  const DOWNLOAD_DIR = path.join(__dirname, "downloads");
-  const CONVERTED_DIR = path.join(__dirname, "esm-modules");
-
-  function ensureDirectoryExists(dir) {
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-  }
+  const tempDir = os.tmpdir();
+  const DOWNLOAD_DIR = path.join(tempDir, "esmgen-downloads");
+  const CONVERTED_DIR = path.join(__dirname, "esm");
 
   async function fetchPackageMetadata(pkg, version = "latest") {
     const url = `https://registry.npmjs.org/${pkg}`;
@@ -64,24 +62,35 @@ async function main() {
   }
 
   async function convertToESM(inputDir, outputDir) {
-    const files = fs.readdirSync(inputDir);
+    const inputFilePath = findEntryFile(inputDir);
 
-    files.forEach((file) => {
-      const filePath = path.join(inputDir, file);
-      if (fs.statSync(filePath).isDirectory()) {
-        // Recursively process directories
-        const newOutputDir = path.join(outputDir, file);
-        fs.mkdirSync(newOutputDir, { recursive: true });
-        convertToESM(filePath, newOutputDir);
-      } else if (filePath.endsWith(".js")) {
-        const transformed = babel.transformFileSync(filePath, {
-          presets: ["@babel/preset-env"],
-          plugins: ["@babel/plugin-transform-modules-commonjs"],
-        });
-        const outputPath = path.join(outputDir, file);
-        fs.writeFileSync(outputPath, transformed.code);
-      }
+    const bundle = await rollup.rollup({
+      input: inputFilePath,
+      plugins: [resolve(), commonjs()],
     });
+
+    await bundle.write({
+      file: path.join(outputDir, "bundle.js"),
+      format: "esm",
+    });
+
+    console.log(`Converted to ESM at: ${path.join(outputDir, "bundle.js")}`);
+  }
+
+  function findEntryFile(inputDir) {
+    const packageJsonPath = path.join(inputDir, "package.json");
+    if (!fs.existsSync(packageJsonPath)) {
+      throw new Error("package.json not found in the root directory");
+    }
+
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+    const entryFile = packageJson.main || "index.js";
+    const entryFilePath = path.join(inputDir, entryFile);
+
+    if (!fs.existsSync(entryFilePath)) {
+      throw new Error(`Entry file ${entryFile} not found in ${inputDir}`);
+    }
+    return entryFilePath;
   }
 
   async function processPackage(pkg, version) {
@@ -137,6 +146,12 @@ async function main() {
     throw new Error(
       `Could not determine extracted package root in ${outputDir}`
     );
+  }
+
+  function ensureDirectoryExists(dir) {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
   }
 }
 

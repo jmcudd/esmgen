@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lodash Example</title>
+</head>
+<body>
+    <h1>Lodash Example</h1>
+    <script type="module">
+        import lodash from '/esm/lodash@4.17.21/bundle.js';
+        console.log(lodash)
+
+
+        // Example usage of debounced function
+        const debouncedFn = lodash.debounce(() => console.log('Debounced!'), 1000);
+        debouncedFn();
+        debouncedFn();
+        setTimeout(debouncedFn, 500);
+    </script>
+
+
+    <div id='map' style='width: 400px; height: 300px;'></div>
+<script type="module">
+import maplibregl from '/esm/maplibre-gl@4.7.1/bundle.js';
+var map = new maplibregl.Map({
+  container: 'map',
+  style: 'https://demotiles.maplibre.org/style.json', // stylesheet location
+  center: [-74.5, 40], // starting position [lng, lat]
+  zoom: 9 // starting zoom
+});
+</script>
+    
+</body>
+</html>
