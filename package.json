@@ -1,0 +1,11 @@
+{
+  "dependencies": {
+    "@babel/core": "^7.26.0",
+    "@babel/plugin-transform-modules-commonjs": "^7.25.9",
+    "@babel/preset-env": "^7.26.0",
+    "axios": "^1.7.7",
+    "babel-preset-env": "^1.7.0",
+    "commander": "^12.1.0",
+    "tar": "^7.4.3"
+  }
+}
