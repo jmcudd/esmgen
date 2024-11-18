@@ -38,6 +38,11 @@ async function main() {
     .option("--port <port>", "Port to serve on", defaultPort)
     .option("--host <host>", "Host to bind the server to", defaultHost)
     .option("--entry <entryFile>", "Custom entry HTML file to serve")
+    .option(
+      "--include-all-assets",
+      "Include all assets from the package",
+      false
+    )
     .action(async (pkg, version = "latest", options) => {
       if (!pkg) {
         console.error("Package name is required.");
@@ -48,7 +53,12 @@ async function main() {
       console.log(`Processing ${pkg}@${version}`);
       console.log(`Converted output directory: ${CONVERTED_DIR}`);
 
-      const esmDirectory = await processPackage(pkg, version, CONVERTED_DIR);
+      const esmDirectory = await processPackage(
+        pkg,
+        version,
+        CONVERTED_DIR,
+        options
+      );
 
       if (options.serve) {
         serve(esmDirectory, options.port, options.host, options.entry);
@@ -207,13 +217,13 @@ async function main() {
     });
   }
 
-  async function convertToESM(inputDir, outputDir) {
+  async function convertToESM(inputDir, outputDir, includeAllAssets) {
     const inputFilePath = findEntryFile(inputDir);
+    const entryDir = path.dirname(inputFilePath);
 
     const bundle = await rollup.rollup({
       input: inputFilePath,
       plugins: [
-        // Existing plugins
         inputFilePath.endsWith(".ts") ? typescript({ tsconfig: false }) : null,
         resolve(),
         commonjs(),
@@ -227,16 +237,8 @@ async function main() {
 
     console.log(`Converted to ESM at: ${path.join(outputDir, "bundle.js")}`);
 
-    // Copy CSS and asset files to the output directory
-    const cssAndAssetsExtensions = [
-      ".css",
-      ".png",
-      ".jpg",
-      ".jpeg",
-      ".gif",
-      ".svg",
-    ];
-    copyAssets(inputDir, outputDir, cssAndAssetsExtensions);
+    // now call copyAssets with the flag
+    copyAssets(inputDir, outputDir, entryDir, includeAllAssets);
 
     return outputDir;
   }
@@ -296,7 +298,7 @@ async function main() {
   `);
   }
 
-  async function processPackage(pkg, version, conversionDir) {
+  async function processPackage(pkg, version, conversionDir, options) {
     try {
       const data = await fetchPackageMetadata(pkg, version);
 
@@ -325,7 +327,8 @@ async function main() {
 
       const esmOutputDirectory = await convertToESM(
         srcDir,
-        conversionOutputDir
+        conversionOutputDir,
+        options.includeAllAssets
       );
 
       return esmOutputDirectory;
@@ -362,21 +365,64 @@ async function main() {
     }
   }
 
-  function copyAssets(srcDir, destDir, extensions) {
+  function copyAssets(srcDir, destDir, entryDir, includeAllAssets = false) {
+    // Define acceptable asset file extensions hard-coded
+    const includedAssetsExtensions = [
+      ".css",
+      ".png",
+      ".jpg",
+      ".jpeg",
+      ".gif",
+      ".svg",
+    ];
+
     const files = fs.readdirSync(srcDir, { withFileTypes: true });
+    const excludedAssets = [];
 
     files.forEach((file) => {
       const srcPath = path.join(srcDir, file.name);
       const destPath = path.join(destDir, file.name);
 
-      if (file.isDirectory()) {
-        ensureDirectoryExists(destPath);
-        copyAssets(srcPath, destPath, extensions);
-      } else if (extensions.includes(path.extname(file.name))) {
-        fs.copyFileSync(srcPath, destPath);
-        console.log(`Asset copied: ${srcPath} to ${destPath}`);
+      if (includeAllAssets) {
+        // Copy all asset files accepting only specific file types
+        if (
+          file.isDirectory() ||
+          includedAssetsExtensions.includes(path.extname(file.name))
+        ) {
+          ensureDirectoryExists(destPath);
+          if (file.isDirectory()) {
+            copyAssets(srcPath, destPath, entryDir, true);
+          } else {
+            fs.copyFileSync(srcPath, destPath);
+            console.log(`Asset copied: ${srcPath} to ${destPath}`);
+          }
+        }
+      } else {
+        if (file.isDirectory()) {
+          const pathFallsWithinEntry = srcPath.startsWith(entryDir);
+          if (pathFallsWithinEntry) {
+            ensureDirectoryExists(destPath);
+            copyAssets(srcPath, destPath, entryDir, false);
+          }
+        } else if (includedAssetsExtensions.includes(path.extname(file.name))) {
+          if (srcPath.startsWith(entryDir)) {
+            fs.copyFileSync(srcPath, destPath);
+            console.log(`Asset copied: ${srcPath} to ${destPath}`);
+          } else {
+            excludedAssets.push(srcPath);
+          }
+        }
       }
     });
+
+    // Print excluded assets if not included by flag
+    if (!includeAllAssets && excludedAssets.length > 0) {
+      console.log("The following files/assets are not included:");
+      excludedAssets.forEach((asset) => console.log(`- ${asset}`));
+      console.log(
+        "Use the --include-all-assets flag to include all assets from the entire npm package."
+      );
+    }
   }
 }
 
