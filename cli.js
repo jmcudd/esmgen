@@ -12,21 +12,31 @@ const resolve = require("@rollup/plugin-node-resolve");
 const tar = require("tar");
 const os = require("os");
 
+function getPackageVersion() {
+  const packageJsonPath = path.join(__dirname, "package.json");
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+    if (packageJson.version) {
+      return packageJson.version;
+    }
+  } catch (error) {
+    console.error("Error reading package.json to determine version:", error);
+  }
+  return "Unknown"; // Default version if unsuccessful
+}
 async function main() {
   const program = new Command();
 
-  program.version("0.0.1");
+  program.version(getPackageVersion());
 
   const defaultPort = 3000;
   const defaultHost = "127.0.0.1";
   const defaultDir = path.join(process.cwd(), "esm");
   const defaultRegistry = "https://registry.npmjs.org/";
-  const esmgenReadmePath = path.join(__dirname, "README.md");
 
   program
-    .command("download [pkg] [version]")
-    .alias("dl")
-    .alias("d")
+    .command("add [pkg] [version]")
+    .alias("a")
     .description("Download and convert a package to ESM.")
     .option(
       "--registry",
@@ -45,23 +55,20 @@ async function main() {
     )
     .action(async (pkg, version = "latest", options) => {
       if (!pkg) {
-        console.error("Package name is required.");
-        process.exit(1);
-      }
+        const esmPackages = getEsmPackages();
 
-      const CONVERTED_DIR = path.resolve(options.dir || defaultDir);
-      console.log(`Processing ${pkg}@${version}`);
-      console.log(`Converted output directory: ${CONVERTED_DIR}`);
+        if (!esmPackages || Object.keys(esmPackages).length === 0) {
+          console.error(
+            "No packages specified in the esm section of package.json and no package name provided."
+          );
+          return;
+        }
 
-      const esmDirectory = await processPackage(
-        pkg,
-        version,
-        CONVERTED_DIR,
-        options
-      );
-
-      if (options.serve) {
-        serve(esmDirectory, options.port, options.host, options.entry);
+        for (const [name, version] of Object.entries(esmPackages)) {
+          await processAndOptionallyServe(name, version, options);
+        }
+      } else {
+        await processAndOptionallyServe(pkg, version, options);
       }
     });
 
@@ -74,15 +81,41 @@ async function main() {
     .option("--dir <dir>", "Directory for ESM modules to serve", defaultDir)
     .option("--entry <entryFile>", "Custom entry HTML file to serve")
     .action((options) => {
-      const CONVERTED_DIR = path.resolve(options.dir || defaultDir);
-      console.log(`Serving from directory: ${CONVERTED_DIR}`);
-      serve(CONVERTED_DIR, options.port, options.host, options.entry);
+      const esmDir = path.resolve(options.dir || defaultDir);
+      console.log(`Serving from directory: ${esmDir}`);
+      serve(esmDir, options.port, options.host, options.entry);
+    });
+
+  program
+    .command("remove <pkg>")
+    .alias("rm")
+    .alias("r")
+    .description("Remove an ESM package and update package.json.")
+    .action((pkg) => {
+      const esmDirectory = path.resolve(defaultDir);
+      const packageDirs = fs.readdirSync(esmDirectory);
+
+      console.log(`Removing ${pkg}...`);
+      const removed = updatePackageJson(pkg, "remove");
+
+      for (const dir of packageDirs) {
+        if (dir.startsWith(pkg + "@")) {
+          const packageDir = path.join(esmDirectory, dir);
+          if (fs.existsSync(packageDir)) {
+            fs.rmSync(packageDir, { recursive: true, force: true });
+            console.log(`Removed ${pkg} from ESM directory.`);
+            return;
+          }
+        }
+      }
+
+      console.error(`Package ${pkg} is not installed.`);
     });
 
   program.parse(process.argv);
 
   const tempDir = os.tmpdir();
-  const DOWNLOAD_DIR = path.join(tempDir, "esmgen-downloads");
+  const tmpDir = path.join(tempDir, "esmgen-downloads");
 
   function serve(dir, port, host, customEntryFile) {
     const app = express();
@@ -219,6 +252,13 @@ async function main() {
 
   async function convertToESM(inputDir, outputDir, includeAllAssets) {
     const inputFilePath = findEntryFile(inputDir);
+    if (!inputFilePath) {
+      console.warn(
+        `No JavaScript entry file found in ${inputDir}. Skipping ESM conversion.`
+      );
+      return;
+    }
+
     const entryDir = path.dirname(inputFilePath);
 
     const bundle = await rollup.rollup({
@@ -247,7 +287,7 @@ async function main() {
     const packageJsonPath = path.join(inputDir, "package.json");
 
     if (!fs.existsSync(packageJsonPath)) {
-      throw new Error("package.json not found in the root directory");
+      return null;
     }
 
     const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
@@ -255,7 +295,6 @@ async function main() {
     // Prioritize dist directory files based on exports
     const exportFields = packageJson.exports;
     if (exportFields) {
-      // Check for direct paths in exports, scrambled accordingly.
       const possiblePaths = [exportFields.default, exportFields.require].flat();
 
       for (const possiblePath of possiblePaths) {
@@ -268,7 +307,6 @@ async function main() {
       }
     }
 
-    // If no exports, look for built files in the dist directory.
     const distFiles = ["dist/index.js", "dist/index.cjs"];
     for (const file of distFiles) {
       const candidatePath = path.join(inputDir, file);
@@ -277,7 +315,6 @@ async function main() {
       }
     }
 
-    // Last resort, check source field or typical main alternatives.
     const sourceFile = packageJson.source || null;
     const mainFile = packageJson.main || null;
     const fileCandidates = [sourceFile, mainFile, "index.js", "index.ts"];
@@ -291,24 +328,29 @@ async function main() {
       }
     }
 
-    // If none are found, report error.
-    throw new Error(`
-    None of the potential entry files specified under exports, or built files (${distFiles.join(", ")}),
-    source or main were found in ${inputDir}
-  `);
+    return null;
+  }
+
+  async function processAndOptionallyServe(pkg, version, options) {
+    const esmDir = path.resolve(options.dir || defaultDir);
+    console.log(`Processing ${pkg}@${version}`);
+    console.log(`Converted output directory: ${esmDir}`);
+
+    const esmDirectory = await processPackage(pkg, version, esmDir, options);
+
+    if (options.serve) {
+      serve(esmDirectory, options.port, options.host, options.entry);
+    }
   }
 
   async function processPackage(pkg, version, conversionDir, options) {
     try {
       const data = await fetchPackageMetadata(pkg, version);
 
-      ensureDirectoryExists(DOWNLOAD_DIR);
+      ensureDirectoryExists(tmpDir);
       ensureDirectoryExists(conversionDir);
 
-      const downloadOutputDir = path.join(
-        DOWNLOAD_DIR,
-        `${pkg}@${data.version}`
-      );
+      const downloadOutputDir = path.join(tmpDir, `${pkg}@${data.version}`);
       const conversionOutputDir = path.join(
         conversionDir,
         `${pkg}@${data.version}`
@@ -322,18 +364,37 @@ async function main() {
       console.log(`Identifying extracted directory structure...`);
       const srcDir = await findExtractedRootDir(downloadOutputDir);
 
-      console.log(`Converting to ESM modules...`);
+      console.log(`Processing package assets...`);
+      const entryFile = findEntryFile(srcDir);
+
+      // Always copy assets if any
       fs.mkdirSync(conversionOutputDir, { recursive: true });
+      if (entryFile) {
+        console.log(
+          `Converting to ESM modules from entry file ${entryFile}...`
+        );
+        await convertToESM(
+          srcDir,
+          conversionOutputDir,
+          options.includeAllAssets
+        );
+      } else {
+        console.log(`No entry file. Only assets will be copied if present.`);
+        copyAssets(
+          srcDir,
+          conversionOutputDir,
+          srcDir,
+          options.includeAllAssets
+        );
+      }
 
-      const esmOutputDirectory = await convertToESM(
-        srcDir,
-        conversionOutputDir,
-        options.includeAllAssets
-      );
+      // Update package.json with the actual resolved version
+      updatePackageJson(pkg, "add", data.version);
 
-      return esmOutputDirectory;
+      return conversionOutputDir;
     } catch (error) {
       console.error("Error:", error.message);
+      return null;
     }
   }
 
@@ -366,7 +427,6 @@ async function main() {
   }
 
   function copyAssets(srcDir, destDir, entryDir, includeAllAssets = false) {
-    // Define acceptable asset file extensions hard-coded
     const includedAssetsExtensions = [
       ".css",
       ".png",
@@ -384,7 +444,6 @@ async function main() {
       const destPath = path.join(destDir, file.name);
 
       if (includeAllAssets) {
-        // Copy all asset files accepting only specific file types
         if (
           file.isDirectory() ||
           includedAssetsExtensions.includes(path.extname(file.name))
@@ -415,7 +474,6 @@ async function main() {
       }
     });
 
-    // Print excluded assets if not included by flag
     if (!includeAllAssets && excludedAssets.length > 0) {
       console.log("The following files/assets are not included:");
       excludedAssets.forEach((asset) => console.log(`- ${asset}`));
@@ -423,6 +481,42 @@ async function main() {
         "Use the --include-all-assets flag to include all assets from the entire npm package."
       );
     }
+  }
+
+  function getEsmPackages() {
+    const packageJsonPath = path.join(process.cwd(), "package.json");
+    if (!fs.existsSync(packageJsonPath)) return {};
+
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+    return packageJson.esm?.packages || {};
+  }
+
+  function updatePackageJson(pkg, action, version) {
+    const packageJsonPath = path.join(process.cwd(), "package.json");
+    let packageJson;
+
+    if (fs.existsSync(packageJsonPath)) {
+      packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+    } else {
+      return;
+    }
+
+    if (!packageJson.esm) {
+      packageJson.esm = { packages: {} };
+    }
+
+    if (action === "add") {
+      packageJson.esm.packages[pkg] = version;
+    } else if (action === "remove") {
+      delete packageJson.esm.packages[pkg];
+    }
+
+    fs.writeFileSync(
+      packageJsonPath,
+      JSON.stringify(packageJson, null, 2),
+      "utf-8"
+    );
+    console.log(`package.json successfully updated.`);
   }
 }
 
