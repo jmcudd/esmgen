@@ -213,7 +213,7 @@ async function main() {
     const bundle = await rollup.rollup({
       input: inputFilePath,
       plugins: [
-        // Using Conditionally only if file extension indicates
+        // Existing plugins
         inputFilePath.endsWith(".ts") ? typescript({ tsconfig: false }) : null,
         resolve(),
         commonjs(),
@@ -226,6 +226,18 @@ async function main() {
     });
 
     console.log(`Converted to ESM at: ${path.join(outputDir, "bundle.js")}`);
+
+    // Copy CSS and asset files to the output directory
+    const cssAndAssetsExtensions = [
+      ".css",
+      ".png",
+      ".jpg",
+      ".jpeg",
+      ".gif",
+      ".svg",
+    ];
+    copyAssets(inputDir, outputDir, cssAndAssetsExtensions);
+
     return outputDir;
   }
 
@@ -348,6 +360,23 @@ async function main() {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
+  }
+
+  function copyAssets(srcDir, destDir, extensions) {
+    const files = fs.readdirSync(srcDir, { withFileTypes: true });
+
+    files.forEach((file) => {
+      const srcPath = path.join(srcDir, file.name);
+      const destPath = path.join(destDir, file.name);
+
+      if (file.isDirectory()) {
+        ensureDirectoryExists(destPath);
+        copyAssets(srcPath, destPath, extensions);
+      } else if (extensions.includes(path.extname(file.name))) {
+        fs.copyFileSync(srcPath, destPath);
+        console.log(`Asset copied: ${srcPath} to ${destPath}`);
+      }
+    });
   }
 }
 
