@@ -1,6 +1,6 @@
 {
   "name": "esmgen",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "A CLI tool that generates and packages ESM modules from npm into a structured directory, serving with a static file server.",
   "main": "cli.js",
   "bin": {
