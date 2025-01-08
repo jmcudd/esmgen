@@ -9,7 +9,7 @@ const rollup = require("rollup");
 const typescript = require("@rollup/plugin-typescript");
 const commonjs = require("@rollup/plugin-commonjs");
 const resolve = require("@rollup/plugin-node-resolve");
-const { terser } = require("rollup-plugin-terser");
+const { terser } = require("@rollup/plugin-terser");
 const tar = require("tar");
 const os = require("os");
 
